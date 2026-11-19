@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="360" viewBox="0 0 920 360">
+  <rect width="920" height="360" rx="12" fill="#0f172a"/>
+  <text x="460" y="38" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700">Linux Access Control Hub Architecture</text>
+
+  <!-- Browser -->
+  <rect x="30" y="95" width="180" height="160" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <text x="120" y="130" text-anchor="middle" fill="#60a5fa" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700">Web Dashboard</text>
+  <text x="120" y="155" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Browser UI</text>
+  <text x="120" y="182" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="11">• 통합 진단 (ss × fw)</text>
+  <text x="120" y="200" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="11">• firewall-config UI</text>
+  <text x="120" y="218" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="11">• SELinux / nmcli</text>
+  <text x="120" y="236" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="11">• 서버별 보호 포트</text>
+
+  <!-- Arrow 1 -->
+  <line x1="210" y1="175" x2="275" y2="175" stroke="#60a5fa" stroke-width="2.5"/>
+  <polygon points="275,170 285,175 275,180" fill="#60a5fa"/>
+  <text x="247" y="163" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">HTTP</text>
+
+  <!-- Controller -->
+  <rect x="285" y="75" width="210" height="200" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="390" y="108" text-anchor="middle" fill="#34d399" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700">Controller (FastAPI)</text>
+  <text x="390" y="130" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Port 8000 (Local / Central)</text>
+  <rect x="305" y="148" width="170" height="32" rx="6" fill="#0f172a" stroke="#334155"/>
+  <text x="390" y="168" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="11">servers.json (서버·보호포트)</text>
+  <rect x="305" y="190" width="170" height="32" rx="6" fill="#0f172a" stroke="#334155"/>
+  <text x="390" y="210" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="11">audit.jsonl (감사 로그)</text>
+  <rect x="305" y="232" width="170" height="28" rx="6" fill="#0f172a" stroke="#334155"/>
+  <text x="390" y="250" text-anchor="middle" fill="#fbbf24" font-family="Segoe UI, sans-serif" font-size="11">Protected Port Guard</text>
+
+  <!-- Arrows to Agents -->
+  <line x1="495" y1="135" x2="575" y2="105" stroke="#34d399" stroke-width="2"/>
+  <polygon points="573,100 584,102 577,110" fill="#34d399"/>
+  <line x1="495" y1="215" x2="575" y2="245" stroke="#34d399" stroke-width="2"/>
+  <polygon points="577,240 584,248 573,250" fill="#34d399"/>
+  <text x="540" y="168" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="10">X-Agent-Token</text>
+
+  <!-- Agent 1 (Live Linux) -->
+  <rect x="585" y="55" width="305" height="125" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+  <text x="737" y="82" text-anchor="middle" fill="#fbbf24" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Linux Server #1 (Rocky 9.3 Agent)</text>
+  <text x="737" y="102" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">uvicorn agent.main:app (systemd · Port 8100/9100)</text>
+  <text x="737" y="128" text-anchor="middle" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="11">firewall-cmd · semanage · setenforce · nmcli · ss</text>
+  <text x="737" y="152" text-anchor="middle" fill="#34d399" font-family="Segoe UI, sans-serif" font-size="11">Mode: live-linux (shell=False + Pydantic 검증)</text>
+
+  <!-- Agent 2 (Mock or Server #2) -->
+  <rect x="585" y="200" width="305" height="115" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+  <text x="737" y="228" text-anchor="middle" fill="#cbd5e1" font-family="Segoe UI, sans-serif" font-size="13" font-weight="700">Linux Server #N / Local Simulator</text>
+  <text x="737" y="250" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11">동일한 REST API 인터페이스로 다중 서버 확장</text>
+  <text x="737" y="276" text-anchor="middle" fill="#60a5fa" font-family="Segoe UI, sans-serif" font-size="11">Mode: live-linux 또는 mock-simulator</text>
+</svg>

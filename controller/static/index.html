@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Linux Access Control Hub</title>
-  <link rel="stylesheet" href="/static/style.css?v=7" />
+  <link rel="stylesheet" href="/static/style.css?v=9" />
 </head>
 <body>
   <div class="layout">
@@ -36,27 +36,48 @@
         <div class="topbar-actions">
           <label class="toggle-inline">
             <input type="checkbox" id="auto-refresh" checked />
-            <span>5초 자동 갱신</span>
+            <span>자동 갱신</span>
           </label>
-          <button class="btn btn-secondary" onclick="refreshAll()">새로고침</button>
+          <button type="button" class="btn btn-secondary" onclick="openEditActiveServerModal()">서버 정보 수정</button>
+          <button type="button" class="btn btn-secondary" onclick="refreshAll()">새로고침</button>
         </div>
       </header>
 
       <nav class="tabs">
-        <button class="tab active" data-tab="overview">통합 진단</button>
+        <button class="tab active" data-tab="overview">모니터링 · 진단</button>
         <button class="tab" data-tab="firewall">방화벽 (firewalld)</button>
-        <button class="tab" data-tab="selinux">SELinux</button>
-        <button class="tab" data-tab="network">네트워크 (nmcli)</button>
-        <button class="tab" data-tab="audit">감사 로그</button>
+        <button class="tab" data-tab="processes">프로세스 감시</button>
+        <button class="tab" data-tab="audit">감사 · 암호화 로그</button>
       </nav>
 
       <div id="toast-area" class="toast-area"></div>
 
-      <!-- Tab: Overview -->
+      <!-- Tab: Overview (Resources + Port Diagnostics + Read-only Network/SELinux) -->
       <section id="tab-overview" class="tab-panel active">
         <div class="summary-grid" id="summary-cards"></div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3>서버 리소스 사용률 (CPU · 메모리)</h3>
+            <div id="res-cpu-mem" class="resource-box"></div>
+          </div>
+          <div class="card">
+            <h3>파티션별 디스크 용량 (<code>df</code>)</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>마운트</th>
+                  <th>사용 / 전체</th>
+                  <th style="width: 170px;">사용률</th>
+                </tr>
+              </thead>
+              <tbody id="res-disk-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="card">
-          <h3>포트별 외부 접근 진단 (Listen 소켓 × 방화벽 × SELinux 교차 분석)</h3>
+          <h3>포트별 외부 접근 진단 (Listen 소켓 × 방화벽 교차 분석)</h3>
           <p class="hint">데몬이 실제로 열려 있는지(<code>ss</code>), 방화벽에서 허용되는지(<code>firewalld</code>)를 한눈에 확인합니다.</p>
           <table>
             <thead>
@@ -72,6 +93,31 @@
             <tbody id="diag-tbody"></tbody>
           </table>
         </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3>네트워크 인터페이스 현황 (조회 전용)</h3>
+            <p class="hint">원격 통신 단절 사고 방지를 위해 네트워크 IP/게이트웨이는 조회 전용으로 표시됩니다.</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>연결 이름</th>
+                  <th>장치</th>
+                  <th>방식</th>
+                  <th>IPv4 주소</th>
+                  <th>게이트웨이</th>
+                  <th>DNS</th>
+                </tr>
+              </thead>
+              <tbody id="net-readonly-tbody"></tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>SELinux 보안 현황 (조회 전용)</h3>
+            <p class="hint">현재 커널 SELinux 강제 상태 및 등록된 사용자 정의 포트 레이블 현황입니다.</p>
+            <div id="se-readonly-box"></div>
+          </div>
+        </div>
       </section>
 
       <!-- Tab: Firewall -->
@@ -80,7 +126,7 @@
           <h3>서버별 고정 보호 포트 (연결 · 상태 체크 유지용)</h3>
           <p class="hint">여기에 등록된 포트(SSH, Agent 포트, 주요 서비스 포트 등)는 방화벽에서 실수로 삭제할 수 없도록 잠금 보호됩니다.</p>
           <form id="protected-port-form" class="btn-group" style="margin-bottom: 12px;">
-            <input type="number" id="protected-port-input" min="1" max="65535" placeholder="포트 번호 (예: 8100)" required style="width: 180px;" />
+            <input type="number" id="protected-port-input" min="1" max="65535" placeholder="포트 번호 (예: 8754)" required style="width: 180px;" />
             <button type="submit" class="btn btn-primary">+ 보호 포트 추가</button>
           </form>
           <div id="protected-ports-list" class="chip-list"></div>
@@ -325,119 +371,292 @@
         </div>
       </section>
 
-      <!-- Tab: SELinux -->
-      <section id="tab-selinux" class="tab-panel">
-        <div class="grid-2">
-          <div class="card">
-            <h3>SELinux 동작 모드</h3>
-            <div class="mode-row">
-              <span>현재 모드: <strong id="se-current-mode">-</strong></span>
-              <div class="btn-group">
-                <button class="btn btn-success" onclick="setSELinuxMode('Enforcing')">Enforcing</button>
-                <button class="btn btn-warn" onclick="setSELinuxMode('Permissive')">Permissive</button>
-              </div>
+      <!-- Tab: Processes -->
+      <section id="tab-processes" class="tab-panel">
+        <div class="summary-grid" id="proc-summary-cards"></div>
+
+        <div class="card">
+          <div class="card-header-row">
+            <div>
+              <h3>서버별 프로세스 동작 감지 및 자동 조치 설정</h3>
+              <p class="hint" style="margin-bottom: 0;">선택된 서버의 주요 프로세스/서비스 생존 여부를 주기적으로 점검하고, 미동작 시 개별 조치 실행 및 동작 로그 저장 여부를 제어합니다.</p>
             </div>
-            <h4 class="subhead">주요 Boolean 제어</h4>
-            <div id="se-booleans-list" class="bool-list"></div>
+            <div class="btn-group">
+              <button type="button" class="btn btn-secondary" onclick="pollActiveServerProcesses()">⚡ 즉시 점검 실행</button>
+              <button type="button" class="btn btn-primary" onclick="openProcessModal()">+ 감시 프로세스 추가</button>
+            </div>
           </div>
-
-          <div class="card">
-            <h3>비표준 포트 레이블 등록 (<code>semanage port</code>)</h3>
-            <form id="se-port-form" class="form-grid">
-              <label>Port Type <input type="text" id="se-type" value="http_port_t" required /></label>
-              <label>포트 <input type="number" id="se-port" min="1" max="65535" placeholder="8080" required /></label>
-              <label>프로토콜
-                <select id="se-proto">
-                  <option value="tcp">TCP</option>
-                  <option value="udp">UDP</option>
-                </select>
-              </label>
-              <button type="submit" class="btn btn-primary">포트 레이블 추가</button>
-            </form>
-            <h4 class="subhead">사용자 정의 포트 목록</h4>
-            <ul id="se-ports-list" class="rule-list"></ul>
-          </div>
-        </div>
-      </section>
-
-      <!-- Tab: Network -->
-      <section id="tab-network" class="tab-panel">
-        <div class="grid-2">
-          <div class="card">
-            <h3>네트워크 인터페이스 상태 (<code>nmcli</code>)</h3>
+          <div class="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>연결 이름</th>
-                  <th>장치</th>
+                  <th>프로세스 / 유닛</th>
                   <th>방식</th>
-                  <th>IPv4 주소</th>
-                  <th>게이트웨이</th>
-                  <th>DNS</th>
+                  <th>현재 상태</th>
+                  <th>미동작 시 조치사항</th>
+                  <th>주기</th>
+                  <th>감시 활성</th>
+                  <th>동작 로그 저장</th>
+                  <th>최근 점검 결과</th>
+                  <th style="text-align: right;">관리</th>
                 </tr>
               </thead>
-              <tbody id="net-tbody"></tbody>
+              <tbody id="proc-list-tbody"></tbody>
             </table>
           </div>
+        </div>
 
-          <div class="card">
-            <h3>IPv4 설정 변경</h3>
-            <form id="net-form" class="form-grid">
-              <label>연결 이름 (Connection) <input type="text" id="net-con" value="ens160" required /></label>
-              <label>할당 방식
-                <select id="net-method">
-                  <option value="manual">Manual (고정 IP)</option>
-                  <option value="auto">Auto (DHCP)</option>
+        <div class="card">
+          <div class="card-header-row">
+            <div>
+              <h3>프로세스 동작 · 조치 로그</h3>
+              <p class="hint" style="margin-bottom: 0;"><code>동작 로그 저장: ON</code>으로 설정된 프로세스의 점검 및 복구 이력만 DB에 기록됩니다.</p>
+            </div>
+            <div class="fw-toolbar-row">
+              <label class="inline-field">
+                <span>프로세스</span>
+                <select id="proc-log-filter-proc" onchange="loadProcessLogs()">
+                  <option value="">전체 프로세스</option>
                 </select>
               </label>
-              <label>IPv4 주소/CIDR <input type="text" id="net-addr" placeholder="192.168.10.50/24" /></label>
-              <label>게이트웨이 <input type="text" id="net-gw" placeholder="192.168.10.1" /></label>
-              <label>DNS <input type="text" id="net-dns" placeholder="8.8.8.8" /></label>
-              <button type="submit" class="btn btn-primary">네트워크 설정 적용</button>
-            </form>
+              <label class="inline-field">
+                <span>상태</span>
+                <select id="proc-log-filter-status" onchange="loadProcessLogs()">
+                  <option value="">전체 상태</option>
+                  <option value="running">running (정상)</option>
+                  <option value="recovered">recovered (자동복구 성공)</option>
+                  <option value="stopped">stopped (중지 감지)</option>
+                  <option value="recovery_failed">recovery_failed (복구 실패)</option>
+                  <option value="unreachable">unreachable (통신 불가)</option>
+                </select>
+              </label>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="loadProcessLogs()">로그 새로고침</button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 165px;">시간 (UTC)</th>
+                  <th style="width: 150px;">프로세스</th>
+                  <th style="width: 130px;">상태</th>
+                  <th style="width: 150px;">수행 조치</th>
+                  <th style="width: 80px;">결과</th>
+                  <th>상세 내용</th>
+                </tr>
+              </thead>
+              <tbody id="proc-logs-tbody"></tbody>
+            </table>
           </div>
         </div>
       </section>
 
-      <!-- Tab: Audit -->
+      <!-- Tab: Audit & Encrypted Logs -->
       <section id="tab-audit" class="tab-panel">
-        <div class="card">
-          <h3>제어 감사 로그 (최근 50건)</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>시간 (UTC)</th>
-                <th>대상 서버</th>
-                <th>작업</th>
-                <th>상세 내용</th>
-                <th>결과</th>
-              </tr>
-            </thead>
-            <tbody id="audit-tbody"></tbody>
-          </table>
+        <div class="subtabs log-subtabs">
+          <button class="log-subtab active" data-logtab="audit-db">DB 제어 감사 로그</button>
+          <button class="log-subtab" data-logtab="agent-enc">Agent 암호화 로그 조회 · 복호화</button>
+          <button class="log-subtab" data-logtab="manual-dec">암호문 직접 복호화 · Controller 평문 로그</button>
+        </div>
+
+        <!-- Log Subtab 1: DB Audit Logs -->
+        <div id="logtab-audit-db" class="logtab-panel active">
+          <div class="card">
+            <div class="card-header-row">
+              <h3>제어 감사 로그 (PostgreSQL DB)</h3>
+              <div class="fw-toolbar-row">
+                <label class="inline-field">
+                  <span>범위</span>
+                  <select id="audit-filter-scope" onchange="loadAudit()">
+                    <option value="all">전체 서버</option>
+                    <option value="active">현재 선택 서버만</option>
+                  </select>
+                </label>
+                <label class="inline-field">
+                  <span>결과</span>
+                  <select id="audit-filter-result" onchange="loadAudit()">
+                    <option value="">전체</option>
+                    <option value="true">성공만</option>
+                    <option value="false">실패 · 차단만</option>
+                  </select>
+                </label>
+                <label class="inline-field">
+                  <span>건수</span>
+                  <select id="audit-filter-limit" onchange="loadAudit()">
+                    <option value="50">50건</option>
+                    <option value="100">100건</option>
+                    <option value="200">200건</option>
+                  </select>
+                </label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="loadAudit()">새로고침</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 165px;">시간 (UTC)</th>
+                    <th style="width: 160px;">대상 서버</th>
+                    <th style="width: 160px;">작업</th>
+                    <th>상세 내용</th>
+                    <th style="width: 80px;">결과</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Log Subtab 2: Remote Agent Encrypted Logs -->
+        <div id="logtab-agent-enc" class="logtab-panel">
+          <div class="card">
+            <div class="card-header-row">
+              <div>
+                <h3>Agent 암호화 로그 원격 조회 및 즉시 복호화</h3>
+                <p class="hint" style="margin-bottom: 0;">Agent 서버에는 AES-256-GCM 암호문(<code>enc</code>)만 기록되며, Controller에서 조회 시 서버 키로 즉시 복호화해 확인합니다.</p>
+              </div>
+              <div class="fw-toolbar-row">
+                <label class="inline-field">
+                  <span>표시 모드</span>
+                  <select id="agent-log-decrypt-mode" onchange="loadAgentEncryptedLogs()">
+                    <option value="true">🔓 즉시 복호화 보기 (권장)</option>
+                    <option value="false">🔒 Agent 저장 암호문 원문 보기</option>
+                  </select>
+                </label>
+                <label class="inline-field">
+                  <span>건수</span>
+                  <select id="agent-log-limit" onchange="loadAgentEncryptedLogs()">
+                    <option value="50">50건</option>
+                    <option value="100">100건</option>
+                    <option value="200">200건</option>
+                  </select>
+                </label>
+                <button type="button" class="btn btn-primary btn-sm" onclick="loadAgentEncryptedLogs()">Agent 로그 불러오기</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 165px;">시간 (UTC)</th>
+                    <th style="width: 140px;">이벤트 구분</th>
+                    <th style="width: 130px;">전송 / 로그 상태</th>
+                    <th>복호화된 명령어 · 실행 상세 (또는 원본 암호문)</th>
+                  </tr>
+                </thead>
+                <tbody id="agent-enc-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Log Subtab 3: Manual Decryptor & Controller Plaintext Logs -->
+        <div id="logtab-manual-dec" class="logtab-panel">
+          <div class="grid-2">
+            <div class="card">
+              <h3>암호화 로그 직접 붙여넣기 복호화</h3>
+              <p class="hint">서버 터미널(<code>agent.log</code>, <code>agent_encrypted.jsonl</code>, <code>journalctl</code>)에서 복사한 <code>[ENC_LOG]</code> 라인이나 암호문을 붙여넣으면 현재 선택된 서버의 키로 즉시 복호화합니다.</p>
+              <form id="manual-decrypt-form" class="form-grid">
+                <label>암호화 로그 라인 (줄바꿈으로 여러 줄 입력 가능)
+                  <textarea id="manual-decrypt-input" rows="5" placeholder="[ENC_LOG] id=alog-... event=inbound_command enc=...&#10;또는 순수 enc 암호문 토큰 입력" required></textarea>
+                </label>
+                <button type="submit" class="btn btn-primary">🔓 현재 선택 서버 키로 복호화</button>
+              </form>
+              <h4 class="subhead">복호화 결과</h4>
+              <div id="manual-decrypt-output" class="decrypt-result-box">
+                <span class="meta">복호화할 로그를 입력하고 버튼을 누르세요.</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header-row">
+                <div>
+                  <h3>Controller 평문 전송 로그 (<code>controller.log</code>)</h3>
+                  <p class="hint" style="margin-bottom: 0;">Controller에서 암호화 전송하기 전 기록된 평문 요청·응답 로그입니다.</p>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="loadControllerPlainLogs()">새로고침</button>
+              </div>
+              <pre id="controller-plain-logs" class="log-pre-box">불러오는 중...</pre>
+            </div>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- Add Server Modal -->
-  <div id="add-server-modal" class="modal hidden">
-    <div class="modal-box">
-      <h3>새 리눅스 에이전트 서버 등록</h3>
-      <form id="add-server-form" class="form-grid">
-        <label>서버 별칭 <input type="text" id="new-srv-name" placeholder="db-server-01" required /></label>
-        <label>Agent URL <input type="url" id="new-srv-url" placeholder="http://192.168.10.60:9100" required /></label>
-        <label>Agent Token <input type="password" id="new-srv-token" value="dev-agent-token" required /></label>
-        <label>그룹 <input type="text" id="new-srv-group" value="production" /></label>
-        <label>고정 보호 포트 (쉼표 구분) <input type="text" id="new-srv-ports" placeholder="22, 8100 (비우면 자동 지정)" /></label>
+  <!-- Add / Edit Watched Process Modal -->
+  <div id="process-modal" class="modal hidden">
+    <div class="modal-box modal-box-wide">
+      <h3 id="proc-modal-title">감시 프로세스 추가</h3>
+      <form id="process-form" class="form-grid">
+        <input type="hidden" id="proc-edit-id" value="" />
+        <label>프로세스 또는 systemd 유닛 이름
+          <input type="text" id="proc-name" placeholder="예: nginx, sshd, postgresql" required />
+        </label>
+        <label>동작 감지 방식
+          <select id="proc-check-type">
+            <option value="process">프로세스 이름 매칭 (pgrep -x)</option>
+            <option value="systemd">systemd 서비스 활성 상태 (systemctl is-active)</option>
+          </select>
+        </label>
+        <label>미동작 시 개별 조치사항
+          <select id="proc-recovery-action" onchange="syncProcessRecoveryTargetField()">
+            <option value="alert_only">알림 / 경고 로그만 기록 (자동 복구 없음)</option>
+            <option value="systemctl_restart">systemd 서비스 자동 재시작 (systemctl restart)</option>
+            <option value="script">지정 복구 스크립트 실행 (절대 경로)</option>
+            <option value="none">조치 없음 (상태만 갱신)</option>
+          </select>
+        </label>
+        <label id="proc-target-wrap">
+          <span id="proc-target-label">복구 대상 유닛 / 스크립트 경로</span>
+          <input type="text" id="proc-recovery-target" placeholder="비우면 프로세스 이름과 동일하게 적용" />
+          <small id="proc-target-hint" class="meta"></small>
+        </label>
+        <label>점검 주기 (초, 최소 5초)
+          <input type="number" id="proc-interval" min="5" max="86400" value="30" required />
+        </label>
+        <div class="checkbox-row-group">
+          <label class="checkbox-inline">
+            <input type="checkbox" id="proc-enabled" checked />
+            <span>주기적 감시 활성화</span>
+          </label>
+          <label class="checkbox-inline">
+            <input type="checkbox" id="proc-save-log" checked />
+            <span>이 프로세스의 동작 로그를 DB에 저장 (<code>save_log</code>)</span>
+          </label>
+        </div>
         <div class="modal-actions">
-          <button type="button" class="btn btn-secondary" onclick="closeAddServerModal()">취소</button>
-          <button type="submit" class="btn btn-primary">등록</button>
+          <button type="button" class="btn btn-secondary" onclick="closeProcessModal()">취소</button>
+          <button type="submit" class="btn btn-primary">저장</button>
         </div>
       </form>
     </div>
   </div>
 
-  <script src="/static/app.js?v=6"></script>
+  <!-- Add / Edit Server Modal -->
+  <div id="add-server-modal" class="modal hidden">
+    <div class="modal-box modal-box-wide">
+      <h3 id="srv-modal-title">새 리눅스 에이전트 서버 등록</h3>
+      <form id="add-server-form" class="form-grid">
+        <input type="hidden" id="edit-srv-id" value="" />
+        <label>서버 별칭 <input type="text" id="new-srv-name" placeholder="db-server-01" required /></label>
+        <label>Agent URL (IP 또는 포트 변경 시 수정) <input type="url" id="new-srv-url" placeholder="http://192.168.10.60:8754" required /></label>
+        <label>
+          <span id="srv-token-label">Agent Token</span>
+          <input type="password" id="new-srv-token" value="dev-agent-token" required />
+          <small id="srv-token-hint" class="meta"></small>
+        </label>
+        <label>그룹 <input type="text" id="new-srv-group" value="production" /></label>
+        <label>고정 보호 포트 (쉼표 구분) <input type="text" id="new-srv-ports" placeholder="22, 8754 (비우면 자동 지정)" /></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeAddServerModal()">취소</button>
+          <button type="submit" id="srv-submit-btn" class="btn btn-primary">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

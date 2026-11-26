@@ -30,6 +30,7 @@
 ---
 
 ## 관련 정리 문서
+- [실행 및 운영 명령어 전체 가이드 (Controller, Agent, Docker, 실서버 배포, 테스트)](docs/run-commands.md)
 - [리눅스 서버 접근 제어 및 네트워크 관리 정리 (firewalld, SELinux, nmcli, nmtui)](docs/linux-connection-control.md)
 
 ---
@@ -57,34 +58,33 @@ linux-access-control-hub/
 
 ### 1. 로컬 테스트 (Windows / 시뮬레이터 모드)
 ```bash
-pip install -r requirements.txt
+uv sync --all-extras
 
 # 터미널 1: Mock Agent 실행
-uvicorn agent.main:app --host 127.0.0.1 --port 9100
+uv run uvicorn agent.main:app --host 127.0.0.1 --port 8754
 
 # 터미널 2: Web Dashboard Controller 실행
-uvicorn controller.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn controller.main:app --host 127.0.0.1 --port 8000
 ```
 브라우저에서 `http://127.0.0.1:8000` 접속
 
 ### 2. 실서버 배포 (Rocky Linux 9.x / RHEL 9.x)
 ```bash
-# 1) Rocky 서버로 agent 폴더 전송 후 필수 패키지 설치
-sudo dnf install -y python3-pip policycoreutils-python-utils
-sudo pip3 install fastapi uvicorn pydantic
+# 1) Rocky 서버에 SELinux 관리 도구 및 uv 설치
+sudo dnf install -y policycoreutils-python-utils
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2) systemd 서비스 등록 (agent.service 내 AGENT_TOKEN 수정 권장)
-sudo cp /opt/linux-access-control-hub/agent/agent.service /etc/systemd/system/linux-access-agent.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now linux-access-agent
+# 2) 프로젝트 파일 전송 후 배포 스크립트 실행 (전용 .venv + Python 3.14 자동 구성 및 서비스 시작)
+#    (폐쇄망 서버의 경우 로컬에서 deploy/build_bundle.ps1 실행 후 deploy/wheels 포함 전송)
+sudo bash /opt/linux-access-control-hub/deploy/deploy_agent.sh
 
 # 3) 방화벽 Agent 포트 허용
-sudo firewall-cmd --permanent --add-port=9100/tcp
+sudo firewall-cmd --permanent --add-port=8754/tcp
 sudo firewall-cmd --reload
 ```
-웹 대시보드 좌측 **`+ 추가`** 버튼을 눌러 `http://<서버IP>:9100`과 설정한 토큰을 등록하면 즉시 연결됩니다.
+웹 대시보드 좌측 **`+ 추가`** 버튼을 눌러 `http://<서버IP>:8754`과 설정한 토큰(`agent.service` 내 `AGENT_TOKEN`)을 등록하면 즉시 연결됩니다.
 
 ### 3. 테스트 실행
 ```bash
-python -m pytest -v
+uv run pytest -v
 ```

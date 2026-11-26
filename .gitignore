@@ -7,3 +7,9 @@ venv/
 
 # Runtime state & sensitive agent tokens/IPs
 controller/data/
+agent/logs/
+
+# Offline deployment wheel bundle
+deploy/wheels/
+deploy/bin/
+deploy/requirements-agent.lock.txt

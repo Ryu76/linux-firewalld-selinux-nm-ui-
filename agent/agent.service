@@ -9,8 +9,8 @@ User=root
 WorkingDirectory=/opt/linux-access-control-hub
 Environment="AGENT_TOKEN=CHANGE_ME_TO_STRONG_RANDOM_TOKEN"
 Environment="AGENT_MOCK=0"
-Environment="PROTECTED_PORTS=22"
-ExecStart=/usr/bin/python3 -m uvicorn agent.main:app --host 0.0.0.0 --port 8100
+Environment="PROTECTED_PORTS=22,8754"
+ExecStart=/opt/linux-access-control-hub/.venv/bin/python -m uvicorn agent.main:app --host 0.0.0.0 --port 8754
 Restart=on-failure
 RestartSec=3
 

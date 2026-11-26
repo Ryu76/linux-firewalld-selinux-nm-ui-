@@ -1,11 +1,12 @@
 import re
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 IP_OR_CIDR_RE = re.compile(
     r"^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:/(?:3[0-2]|[12]?\d))?$"
 )
 SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_.\-]{1,64}$")
+SAFE_SCRIPT_PATH_RE = re.compile(r"^/[a-zA-Z0-9_./\-]{1,200}$")
 
 
 def validate_ip_or_cidr(value: str) -> str:
@@ -79,6 +80,34 @@ class FirewallForwardPortRequest(BaseModel):
                 raise ValueError("Forward target address must be a single IP")
             return validated
         return v
+
+
+class ProcessTargetItem(BaseModel):
+    name: str = Field(description="Process or systemd unit name")
+    check_type: Literal["process", "systemd"] = "process"
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return validate_safe_name(v)
+
+
+class ProcessCheckRequest(BaseModel):
+    targets: list[ProcessTargetItem] = Field(default_factory=list, max_length=100)
+
+
+class ProcessRecoverRequest(BaseModel):
+    action_type: Literal["systemctl_restart", "script"]
+    target: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "ProcessRecoverRequest":
+        if self.action_type == "systemctl_restart":
+            validate_safe_name(self.target)
+        elif self.action_type == "script":
+            if ".." in self.target or not SAFE_SCRIPT_PATH_RE.match(self.target):
+                raise ValueError(f"Invalid recovery script path: {self.target}")
+        return self
 
 
 class FirewallSourceRequest(BaseModel):
@@ -209,3 +238,31 @@ class NetworkIPv4Request(BaseModel):
                 raise ValueError("Gateway and DNS must be a single IP without CIDR prefix")
             return validated
         return v
+
+
+class ProcessTargetItem(BaseModel):
+    name: str = Field(description="Process or systemd unit name")
+    check_type: Literal["process", "systemd"] = "process"
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        return validate_safe_name(v)
+
+
+class ProcessCheckRequest(BaseModel):
+    targets: list[ProcessTargetItem] = Field(default_factory=list, max_length=100)
+
+
+class ProcessRecoverRequest(BaseModel):
+    action_type: Literal["systemctl_restart", "script"]
+    target: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "ProcessRecoverRequest":
+        if self.action_type == "systemctl_restart":
+            validate_safe_name(self.target)
+        elif self.action_type == "script":
+            if ".." in self.target or not SAFE_SCRIPT_PATH_RE.match(self.target):
+                raise ValueError(f"Invalid recovery script path: {self.target}")
+        return self

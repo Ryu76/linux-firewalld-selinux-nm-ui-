@@ -1,6 +1,8 @@
 import copy
 from typing import Any
 
+from agent.logger import mutating_context, record_encrypted_agent_log
+
 from agent.schemas import (
     FirewallControlRequest,
     FirewallForwardPortRequest,
@@ -12,6 +14,8 @@ from agent.schemas import (
     FirewallServiceRequest,
     FirewallSourceRequest,
     NetworkIPv4Request,
+    ProcessCheckRequest,
+    ProcessRecoverRequest,
     SELinuxBooleanRequest,
     SELinuxModeRequest,
     SELinuxPortRequest,
@@ -28,6 +32,36 @@ class MockLinuxBackend:
             "mode": self.mode_label,
             "hostname": hostname,
             "os": "Rocky Linux 9.4 (Simulated)",
+            "resources": {
+                "cpu_cores": 4,
+                "load_1m": 0.48,
+                "load_5m": 0.36,
+                "load_15m": 0.29,
+                "cpu_percent": 12.0,
+                "mem_total_mb": 8192,
+                "mem_used_mb": 2940,
+                "mem_percent": 35.9,
+                "uptime_sec": 1232520,
+                "uptime_human": "14d 6h 22m",
+                "disks": [
+                    {
+                        "mount": "/",
+                        "filesystem": "/dev/mapper/rl-root",
+                        "size_gb": 50.0,
+                        "used_gb": 18.4,
+                        "avail_gb": 31.6,
+                        "use_percent": 36.8,
+                    },
+                    {
+                        "mount": "/var",
+                        "filesystem": "/dev/mapper/rl-var",
+                        "size_gb": 100.0,
+                        "used_gb": 42.5,
+                        "avail_gb": 57.5,
+                        "use_percent": 42.5,
+                    },
+                ],
+            },
             "listening_ports": [
                 {"protocol": "tcp", "bind_ip": "0.0.0.0", "port": 22, "process": "sshd", "external_exposed": True},
                 {"protocol": "tcp", "bind_ip": "0.0.0.0", "port": 80, "process": "nginx", "external_exposed": True},
@@ -303,3 +337,42 @@ class MockLinuxBackend:
                     iface["address"] = "192.168.10.123/24 (DHCP)"
                 return {"ok": True, "detail": f"[MOCK] Updated {req.connection} ({req.method})"}
         raise RuntimeError(f"Connection '{req.connection}' not found")
+
+    def check_processes(self, req: ProcessCheckRequest) -> dict[str, Any]:
+        running_procs = {
+            p["process"]
+            for p in self._state.get("listening_ports", [])
+            if p.get("process")
+        }
+        results: list[dict[str, Any]] = []
+        for item in req.targets:
+            is_running = item.name in running_procs
+            results.append(
+                {
+                    "name": item.name,
+                    "check_type": item.check_type,
+                    "status": "running" if is_running else "stopped",
+                    "detail": "[MOCK] running" if is_running else "[MOCK] not running",
+                }
+            )
+        return {"ok": True, "results": results}
+
+    def recover_process(self, req: ProcessRecoverRequest) -> dict[str, Any]:
+        if req.action_type == "systemctl_restart":
+            ports = self._state.setdefault("listening_ports", [])
+            if not any(p.get("process") == req.target for p in ports):
+                ports.append(
+                    {
+                        "protocol": "tcp",
+                        "bind_ip": "127.0.0.1",
+                        "port": 0,
+                        "process": req.target,
+                        "external_exposed": False,
+                    }
+                )
+            if mutating_context.get():
+                record_encrypted_agent_log("mock_cmd", {"cmd": ["systemctl", "restart", req.target], "rc": 0})
+            return {"ok": True, "detail": f"[MOCK] Restarted systemd unit '{req.target}'"}
+        if mutating_context.get():
+            record_encrypted_agent_log("mock_cmd", {"cmd": [req.target], "rc": 0})
+        return {"ok": True, "detail": f"[MOCK] Executed recovery script '{req.target}'"}

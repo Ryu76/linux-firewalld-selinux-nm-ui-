@@ -1,10 +1,14 @@
+import os
 import platform
 import re
 import socket
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Optional
+
+from agent.logger import mutating_context, record_encrypted_agent_log
 
 from agent.schemas import (
     FirewallControlRequest,
@@ -17,6 +21,8 @@ from agent.schemas import (
     FirewallServiceRequest,
     FirewallSourceRequest,
     NetworkIPv4Request,
+    ProcessCheckRequest,
+    ProcessRecoverRequest,
     SELinuxBooleanRequest,
     SELinuxModeRequest,
     SELinuxPortRequest,
@@ -25,6 +31,8 @@ from agent.schemas import (
 
 def _run_cmd(args: list[str], timeout: int = 10) -> tuple[int, str, str]:
     """Execute a system command safely without shell interpolation."""
+    cmd_str = " ".join(args)
+    start = time.perf_counter()
     try:
         proc = subprocess.run(
             args,
@@ -33,11 +41,28 @@ def _run_cmd(args: list[str], timeout: int = 10) -> tuple[int, str, str]:
             text=True,
             timeout=timeout,
         )
-        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
+        if mutating_context.get():
+            record_encrypted_agent_log(
+                "system_cmd",
+                {
+                    "cmd": args,
+                    "rc": proc.returncode,
+                    "elapsed_ms": round(elapsed_ms, 1),
+                    "stderr": stderr[:500] if stderr else "",
+                },
+            )
+        return proc.returncode, stdout, stderr
     except FileNotFoundError:
+        if mutating_context.get():
+            record_encrypted_agent_log("system_cmd", {"cmd": args, "rc": 127, "error": "not_found"})
         return 127, "", f"Command not found: {args[0]}"
     except subprocess.TimeoutExpired:
-        return 124, "", f"Command timed out: {' '.join(args)}"
+        if mutating_context.get():
+            record_encrypted_agent_log("system_cmd", {"cmd": args, "rc": 124, "error": f"timeout({timeout}s)"})
+        return 124, "", f"Command timed out: {cmd_str}"
 
 
 class LinuxBackend:
@@ -55,10 +80,105 @@ class LinuxBackend:
             "mode": self.mode_label,
             "hostname": socket.gethostname(),
             "os": f"{platform.system()} {platform.release()}",
+            "resources": self._get_resources_status(),
             "listening_ports": self._get_listening_ports(),
             "firewall": self._get_firewall_status(),
             "selinux": self._get_selinux_status(),
             "network": self._get_network_status(),
+        }
+
+    def _get_resources_status(self) -> dict[str, Any]:
+        cpu_cores = os.cpu_count() or 1
+        load_1m = load_5m = load_15m = 0.0
+        try:
+            parts = Path("/proc/loadavg").read_text(encoding="utf-8").split()
+            if len(parts) >= 3:
+                load_1m, load_5m, load_15m = float(parts[0]), float(parts[1]), float(parts[2])
+        except (OSError, ValueError):
+            pass
+        cpu_percent = min(100.0, round((load_1m / max(1, cpu_cores)) * 100.0, 1))
+
+        uptime_sec = 0
+        uptime_human = "-"
+        try:
+            up_raw = Path("/proc/uptime").read_text(encoding="utf-8").split()[0]
+            uptime_sec = int(float(up_raw))
+            days, rem = divmod(uptime_sec, 86400)
+            hours, rem = divmod(rem, 3600)
+            mins = rem // 60
+            uptime_human = f"{days}d {hours}h {mins}m" if days > 0 else f"{hours}h {mins}m"
+        except (OSError, ValueError, IndexError):
+            pass
+
+        mem_total_mb = 0
+        mem_used_mb = 0
+        mem_percent = 0.0
+        try:
+            mem_map: dict[str, int] = {}
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+                if ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                num_str = v.strip().split()[0]
+                if num_str.isdigit():
+                    mem_map[k.strip()] = int(num_str)
+            total_kb = mem_map.get("MemTotal", 0)
+            avail_kb = mem_map.get(
+                "MemAvailable",
+                mem_map.get("MemFree", 0) + mem_map.get("Buffers", 0) + mem_map.get("Cached", 0),
+            )
+            if total_kb > 0:
+                used_kb = max(0, total_kb - avail_kb)
+                mem_total_mb = round(total_kb / 1024)
+                mem_used_mb = round(used_kb / 1024)
+                mem_percent = round((used_kb / total_kb) * 100.0, 1)
+        except OSError:
+            pass
+
+        disks: list[dict[str, Any]] = []
+        rc, out, _ = _run_cmd(
+            ["df", "-P", "-k", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs", "-x", "overlay"],
+            timeout=5,
+        )
+        if rc == 0:
+            lines = out.splitlines()
+            for line in lines[1:]:
+                cols = line.split()
+                if len(cols) < 6:
+                    continue
+                fs, size_s, used_s, avail_s, cap_s, mount = cols[0], cols[1], cols[2], cols[3], cols[4], cols[5]
+                if mount.startswith("/run/") or mount.startswith("/sys") or mount.startswith("/proc"):
+                    continue
+                try:
+                    size_gb = round(int(size_s) / (1024 * 1024), 1)
+                    used_gb = round(int(used_s) / (1024 * 1024), 1)
+                    avail_gb = round(int(avail_s) / (1024 * 1024), 1)
+                    use_pct = float(cap_s.rstrip("%"))
+                except ValueError:
+                    continue
+                disks.append(
+                    {
+                        "mount": mount,
+                        "filesystem": fs,
+                        "size_gb": size_gb,
+                        "used_gb": used_gb,
+                        "avail_gb": avail_gb,
+                        "use_percent": use_pct,
+                    }
+                )
+
+        return {
+            "cpu_cores": cpu_cores,
+            "load_1m": round(load_1m, 2),
+            "load_5m": round(load_5m, 2),
+            "load_15m": round(load_15m, 2),
+            "cpu_percent": cpu_percent,
+            "mem_total_mb": mem_total_mb,
+            "mem_used_mb": mem_used_mb,
+            "mem_percent": mem_percent,
+            "uptime_sec": uptime_sec,
+            "uptime_human": uptime_human,
+            "disks": disks,
         }
 
     def _get_listening_ports(self) -> list[dict[str, Any]]:
@@ -458,3 +578,39 @@ class LinuxBackend:
         if rc_up != 0:
             raise RuntimeError(err_up or out_up or "nmcli con up failed")
         return {"ok": True, "detail": f"Updated {req.connection} ({req.method}) and reactivated"}
+
+    def check_processes(self, req: ProcessCheckRequest) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
+        for item in req.targets:
+            if item.check_type == "systemd":
+                rc, out, err = _run_cmd(["systemctl", "is-active", item.name], timeout=5)
+                running = rc == 0 and out == "active"
+                detail = out or err or ("active" if running else "inactive")
+            else:
+                rc, out, err = _run_cmd(["pgrep", "-x", item.name], timeout=5)
+                running = rc == 0 and bool(out)
+                detail = f"pids: {','.join(out.splitlines())}" if running else (err or "not running")
+            results.append(
+                {
+                    "name": item.name,
+                    "check_type": item.check_type,
+                    "status": "running" if running else "stopped",
+                    "detail": detail,
+                }
+            )
+        return {"ok": True, "results": results}
+
+    def recover_process(self, req: ProcessRecoverRequest) -> dict[str, Any]:
+        if req.action_type == "systemctl_restart":
+            rc, out, err = _run_cmd(["systemctl", "restart", req.target], timeout=20)
+            if rc != 0:
+                raise RuntimeError(err or out or f"systemctl restart {req.target} failed")
+            return {"ok": True, "detail": f"Restarted systemd unit '{req.target}'"}
+
+        script_path = Path(req.target)
+        if not script_path.is_file():
+            raise RuntimeError(f"Recovery script not found: {req.target}")
+        rc, out, err = _run_cmd([str(script_path)], timeout=30)
+        if rc != 0:
+            raise RuntimeError(err or out or f"Recovery script exited with code {rc}")
+        return {"ok": True, "detail": out or f"Executed recovery script '{req.target}'"}
